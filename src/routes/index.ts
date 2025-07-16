@@ -7,6 +7,7 @@ import AuthCallback from "@/pages/AuthCallBack.vue"
 import Dashboard from "@/pages/Dashboard.vue"
 import SearchItem from "@/pages/SearchItem.vue"
 import { useAuthStore } from '@/stores/auth'
+import MovieDetail from "@/components/movie/MovieDetail.vue";
 
 const routes = [
     {
@@ -47,6 +48,12 @@ const routes = [
         path: '/search',
         name: 'Search',
         component: SearchItem,
+        meta: { requiresAuth: true }
+    },
+    {
+        path: '/detail/:type/:id',
+        name: 'movie-detail',
+        component: MovieDetail,
         meta: { requiresAuth: true }
     }
 ]

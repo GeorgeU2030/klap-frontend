@@ -4,7 +4,7 @@
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex justify-between items-center py-4">
           <div class="flex items-center space-x-4">
-            <button @click="$router.push('/dashboard')" class="text-violet-400 cursor-pointer hover:text-cyan-300 transition-colors duration-300">
+            <button @click="() => router.push('/dashboard')" class="text-violet-400 cursor-pointer hover:text-cyan-300 transition-colors duration-300">
               <ArrowLeft class="h-5 w-5" />
             </button>
             <h1 class="text-2xl font-bold bg-gradient-to-r from-violet-200 to-cyan-200 bg-clip-text text-transparent">Search</h1>
@@ -81,7 +81,7 @@
                 <img
                     v-if="item.poster_path"
                     :src="`https://image.tmdb.org/t/p/w500${item.poster_path}`"
-                    :alt="item.title || item.name"
+                    :alt="getItemTitle(item)"
                     class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                 />
                 <div
@@ -95,21 +95,44 @@
                   {{ getMediaType(item) }}
                 </div>
 
-                <!-- Overlay gradient on hover -->
+                <!-- Vote Average Circle for Backend Items -->
+
+
                 <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               </div>
 
               <div class="p-3">
                 <h3 class="font-semibold text-white mb-1 line-clamp-1 text-sm group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-violet-400 group-hover:to-cyan-300 transition-all duration-300">
-                  {{ item.title || item.name }}
+                  {{ getItemTitle(item) }}
                 </h3>
                 <div class="flex items-center justify-between text-xs">
                     <span class="text-cyan-300 font-medium bg-black/30 px-2 py-1 rounded-full">
-                      {{ formatDate(item.release_date || item.first_air_date) }}
+                      {{ formatDate(getItemDate(item)) }}
                     </span>
-                  <span class="text-violet-300/80 text-xs">
-                      {{ item.vote_average?.toFixed(1) || 'N/A' }}
-                    </span>
+                </div>
+                <div v-if="isBackendItem(item)" class="absolute bottom-2 right-2">
+                  <div class="relative">
+                    <!-- Outer glow ring -->
+                    <div class="absolute inset-0 rounded-full bg-gradient-to-r from-violet-400/40 to-cyan-500/40 blur-sm scale-110 animate-pulse"></div>
+
+                    <!-- Main circle -->
+                    <div :class="[
+                      'relative w-12 h-12 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg border-2 transition-all duration-300',
+                      getVoteColorClass(item.vote_average),
+                      'group-hover:scale-110 group-hover:shadow-xl'
+                    ]">
+                      <!-- Background gradient -->
+                      <div class="absolute inset-0 rounded-full bg-gradient-to-br from-black/20 to-transparent"></div>
+
+                      <!-- Score text -->
+                      <span class="relative z-10 drop-shadow-md text-xl">
+                        {{ formatVoteAverage(item.vote_average) }}
+                      </span>
+
+                      <!-- Sparkle effect -->
+                      <div class="absolute inset-0 rounded-full bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -139,177 +162,265 @@
     </div>
   </div>
 </template>
-  
+
 <script setup lang="ts">
-  import { ref, onMounted, computed, watch } from 'vue'
-  import { useRoute, useRouter } from 'vue-router'
-  import { 
-    Search, 
-    ArrowLeft, 
-    Loader2, 
-    FileSearch,
-    Film,
-    Tv,
-    ImageIcon
-  } from 'lucide-vue-next'
-  
-  const route = useRoute()
-  const router = useRouter()
-  
-  // TMDB Configuration
-  const TMDB_BASE_URL = 'https://api.themoviedb.org/3'
-  const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
-  
-  // Reactive state
-  const searchQuery = ref('')
-  const activeFilter = ref('multi')
-  const results = ref([])
-  const totalResults = ref(0)
-  const currentPage = ref(1)
-  const isSearching = ref(false)
-  const isLoadingMore = ref(false)
-  const selectedItem = ref(null)
-  
-  // Filters configuration
-  const filters = [
-    { value: 'multi', label: 'All', icon: Search },
-    { value: 'movie', label: 'Movies', icon: Film },
-    { value: 'tv', label: 'TV Shows', icon: Tv }
-  ]
-  
-  // Computed properties
-  const hasMore = computed(() => {
-    return currentPage.value * 20 < totalResults.value
-  })
-  
-  // Search debounce
-  let searchTimeout = null
-  
-  const handleSearch = () => {
-    if (searchTimeout) clearTimeout(searchTimeout)
-    
-    searchTimeout = setTimeout(() => {
-      if (searchQuery.value.trim()) {
-        currentPage.value = 1
-        performSearch()
-      } else {
-        results.value = []
-        totalResults.value = 0
-      }
-    }, 300)
-  }
-  
-  const performSearch = async () => {
-    if (!searchQuery.value.trim()) return
-    
-    isSearching.value = true
-    
-    try {
-      const endpoint = activeFilter.value === 'multi' 
-        ? '/search/multi' 
-        : `/search/${activeFilter.value}`
-      
-      const response = await fetch(
-        `${TMDB_BASE_URL}${endpoint}?api_key=${TMDB_API_KEY}&language=en-US&query=${encodeURIComponent(searchQuery.value)}&page=${currentPage.value}`
-      )
-      
-      if (!response.ok) {
-        throw new Error(`Error: ${response.statusText}`)
-      }
+import {type Component, computed, onMounted, ref, watch} from 'vue'
+import {useRoute, useRouter} from 'vue-router'
+import {ArrowLeft, FileSearch, Film, ImageIcon, Loader2, Search, Tv} from 'lucide-vue-next'
 
-      const data = await response.json()
-      
-      if (currentPage.value === 1) {
-        results.value = data.results || []
-      } else {
-        results.value = [...results.value, ...(data.results || [])]
-      }
-      
-      totalResults.value = data.total_results || 0
-      
-    } catch (error) {
-      console.error('Search error:', error)
-      results.value = []
-      totalResults.value = 0
-    } finally {
-      isSearching.value = false
-    }
-  }
-  
-  const loadMore = async () => {
-    if (isLoadingMore.value || !hasMore.value) return
-    
-    isLoadingMore.value = true
-    currentPage.value += 1
-    
-    try {
-      await performSearch()
-    } finally {
-      isLoadingMore.value = false
-    }
-  }
-  
-  const openDetails = (item) => {
-    selectedItem.value = item
-  }
+type SearchItem = {
+  id: number;
+  title?: string;
+  name?: string;
+  poster_path?: string;
+  release_date?: string;
+  first_air_date?: string;
+  vote_average?: number;
+  media_type?: 'movie' | 'tv';
+}
 
-  const getMediaType = (item) => {
-    if (item.media_type === 'movie' || item.title) return 'Movie'
-    if (item.media_type === 'tv' || item.name) return 'TV Show'
-    return 'Unknown'
+interface BackendItem {
+  id: number;
+  tmdb_id: number;
+  type: 'movie' | 'tv';
+  original_title: string;
+  overview: string;
+  poster_path?: string;
+  release_date?: string;
+  vote_average: number;
+  vote_count: number;
+  genres: string;
+}
+
+
+const router = useRouter()
+const route = useRoute()
+
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3'
+const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
+
+const searchQuery = ref('')
+const activeFilter = ref('multi')
+const results = ref<Array<SearchItem | BackendItem>>([]);
+
+const totalResults = ref(0)
+const currentPage = ref(1)
+const isSearching = ref(false)
+const isLoadingMore = ref(false)
+
+const filters: { value: string; label: string; icon: Component }[] = [
+  { value: 'multi', label: 'All', icon: Search },
+  { value: 'movie', label: 'Movies', icon: Film },
+  { value: 'tv', label: 'TV Shows', icon: Tv }
+]
+
+const hasMore = computed(() => currentPage.value * 20 < totalResults.value)
+
+let searchTimeout: number | undefined
+
+const formatVoteAverage = (value?: number): string => {
+  if (!value) return '0';
+  return Math.round(value).toString();
+};
+
+const getItemTitle = (item: SearchResultItem): string => {
+  if ('original_title' in item) return item.original_title;
+  return item.title || item.name || 'Untitled';
+};
+
+const getItemDate = (item: SearchResultItem): string | undefined => {
+  if ('release_date' in item && item.release_date) {
+    return item.release_date;
   }
-  
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Unknown'
-    
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    })
+  if ('first_air_date' in item && item.first_air_date) {
+    return item.first_air_date;
   }
-  
-  // Watch for filter changes
-  watch(activeFilter, () => {
+  return undefined;
+};
+
+// Helper function to check if item is from backend
+const isBackendItem = (item: SearchResultItem): item is BackendItem => {
+  return 'tmdb_id' in item && 'vote_average' in item;
+};
+
+// Get color class based on vote average
+const getVoteColorClass = (score: number): string => {
+  if(score > 90 ){
+    return 'bg-gradient-to-br from-violet-700 to-cyan-700 border-violet-900 shadow-violet-500/30';
+  } else if (score >= 70) {
+    return 'bg-gradient-to-br from-emerald-500 to-green-600 border-emerald-400 shadow-emerald-500/30';
+  } else if (score >= 60) {
+    return 'bg-gradient-to-br from-lime-500 to-green-500 border-lime-400 shadow-lime-500/30';
+  } else if (score >= 40) {
+    return 'bg-gradient-to-br from-yellow-500 to-amber-500 border-yellow-400 shadow-yellow-500/30';
+  } else if (score >= 20) {
+    return 'bg-gradient-to-br from-orange-500 to-amber-600 border-orange-400 shadow-orange-500/30';
+  } else {
+    return 'bg-gradient-to-br from-red-500 to-rose-600 border-red-400 shadow-red-500/30';
+  }
+};
+
+const handleSearch = () => {
+  if (searchTimeout) clearTimeout(searchTimeout)
+
+  searchTimeout = setTimeout(() => {
     if (searchQuery.value.trim()) {
       currentPage.value = 1
       performSearch()
+    } else {
+      results.value = []
+      totalResults.value = 0
     }
-  })
-  
-  // Initialize from route query
-  onMounted(() => {
-    if (route.query.query) {
-      searchQuery.value = route.query.query
-      performSearch()
-    }
-  })
-  
-  // Update URL when search changes
-  watch(searchQuery, (newQuery) => {
-    if (newQuery.trim()) {
-      router.replace({ 
-        path: '/search', 
-        query: { query: newQuery } 
-      })
-    }
-  })
-</script>
-  
-<style scoped>
-  .line-clamp-1 {
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  }, 300)
+}
+
+const searchInBackend = async (query: string) => {
+  try {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/items/search?title=${encodeURIComponent(query)}`);
+    if (!response.ok) return [];
+
+    return await response.json();
+  } catch (error) {
+    return [];
   }
-  
-  .line-clamp-2 {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+};
+
+const performSearch = async () => {
+  if (!searchQuery.value.trim()) return;
+  isSearching.value = true;
+
+  const localItems: BackendItem[] = await searchInBackend(searchQuery.value.trim());
+
+  try {
+    const endpoint = activeFilter.value === 'multi' ? '/search/multi' : `/search/${activeFilter.value}`;
+    const response = await fetch(
+        `${TMDB_BASE_URL}${endpoint}?api_key=${TMDB_API_KEY}&language=en-US&query=${encodeURIComponent(searchQuery.value)}&page=${currentPage.value}`
+    );
+    if (!response.ok) throw new Error(`Error: ${response.statusText}`);
+
+    const data = await response.json();
+    const tmdbResults = (data.results || []) as SearchItem[];
+
+    // Filtrar items locales según el filtro activo
+    const filteredLocalItems = activeFilter.value === 'multi'
+        ? localItems
+        : localItems.filter(item => item.type === activeFilter.value);
+
+    // Crear un Set con los IDs locales para deduplicar
+    const localKeys = new Set(filteredLocalItems.map(item => `${item.tmdb_id}-${item.type}`));
+
+    // Filtrar TMDB results eliminando duplicados y aplicando el filtro correcto
+    const filteredTmdb = tmdbResults.filter(tmdbItem => {
+      // Determinar el tipo del item de TMDB
+      let type: 'movie' | 'tv';
+      if (tmdbItem.media_type) {
+        type = tmdbItem.media_type;
+      } else {
+        // Si no tiene media_type, usar el filtro activo
+        type = activeFilter.value as 'movie' | 'tv';
+      }
+
+      // Verificar que no esté duplicado con items locales
+      return !localKeys.has(`${tmdbItem.id}-${type}`);
+    });
+
+    results.value = currentPage.value === 1
+        ? [...filteredLocalItems, ...filteredTmdb]
+        : [...results.value, ...filteredTmdb];
+
+    totalResults.value = data.total_results || (filteredLocalItems.length + filteredTmdb.length);
+  } catch (error) {
+    console.error('Search error:', error);
+    results.value = [];
+    totalResults.value = 0;
+  } finally {
+    isSearching.value = false;
+  }
+};
+
+const loadMore = async () => {
+  if (isLoadingMore.value || !hasMore.value) return
+  isLoadingMore.value = true
+  currentPage.value += 1
+  try {
+    await performSearch()
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+type SearchResultItem = SearchItem | BackendItem;
+
+const getItemType = (item: SearchResultItem): 'movie' | 'tv' => {
+  if ('type' in item) {
+    return item.type;
+  }
+  if ('media_type' in item && item.media_type) {
+    return item.media_type;
   }
 
+  if (activeFilter.value === 'movie') return 'movie';
+  if (activeFilter.value === 'tv') return 'tv';
+  return 'movie';
+};
+
+const openDetails = (item: SearchResultItem) => {
+  router.push({
+    name: 'movie-detail',
+    params: {
+      id: item.id,
+      type: getItemType(item),
+    },
+    query: {
+      source: 'tmdb_id' in item ? 'backend' : 'tmdb'
+    }
+  });
+}
+
+const getMediaType = (item: SearchResultItem): string => {
+  if ('type' in item) {
+    return item.type === 'movie' ? 'Movie' : 'TV Show';
+  }
+  if ('media_type' in item) {
+    return item.media_type === 'movie' ? 'Movie' : 'TV Show';
+  }
+  if (activeFilter.value === 'movie') return 'Movie';
+  if (activeFilter.value === 'tv') return 'TV Show';
+  return 'Unknown';
+};
+
+const formatDate = (dateString: string | undefined): string => {
+  if (!dateString) return 'Unknown'
+  const date = new Date(dateString)
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+watch(activeFilter, () => {
+  if (searchQuery.value.trim()) {
+    currentPage.value = 1
+    performSearch()
+  }
+})
+
+onMounted(() => {
+  if (route.query.query && typeof route.query.query === 'string') {
+    searchQuery.value = route.query.query
+    performSearch()
+  }
+})
+
+watch(searchQuery, (newQuery) => {
+  if (newQuery.trim()) {
+    router.replace({ path: '/search', query: { query: newQuery } })
+  }
+})
+</script>
+
+<style scoped>
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 </style>
